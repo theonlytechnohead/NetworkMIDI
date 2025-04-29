@@ -5,7 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 
-namespace NetworkMIDI_test {
+namespace NetworkMIDI {
 	class Program {
 
 		static TcpClient tcpClient;
@@ -18,15 +18,15 @@ namespace NetworkMIDI_test {
 		static bool running = false;
 
 		static int Main(string[] args) {
-			Console.Out.WriteLine("Starting...");
 			int result = StartTCP();
 			if (result != 0) { Console.WriteLine(result); return 30; }
 			running = true;
 			Task listenerTask = Task.Run(() => TCPListener());
 			Console.WriteLine("Started network MIDI!");
 
+			Task heartbeat = Task.Run(() => Heartbeat());
 
-			Console.ReadKey();
+            Console.ReadKey();
 			running = false;
 			Console.ResetColor();
 			StopTCP();
@@ -38,17 +38,23 @@ namespace NetworkMIDI_test {
 		}
 
 		static int StartTCP() {
+            Console.Out.WriteLine("Connecting to 192.168.1.128...");
+			tcpClient = new TcpClient();
 			try {
-				tcpClient = new TcpClient("192.168.1.128", 12300);
+				tcpClient.ConnectAsync("192.168.1.128", 12300).Wait(1000);
 			} catch (SocketException) {
 				return 1;
+			} catch (TimeoutException) {
+				return 1;
 			}
+			if (!tcpClient.Connected) return 1;
+
 			tcpClient.NoDelay = true;
 			outputStream = tcpClient.GetStream();
-			outputStream.WriteTimeout = 1000;
-			outputStream.ReadTimeout = 1000;
-			byte[] initData1 = new byte[] { 0x00, 0x00, 0x00, 0x10, 0x20, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x03 };
-			byte[] initData2 = new byte[] { 0x00, 0x00, 0x00, 0x10, 0x23, 0x00, 0x00, 0x00, 0x19, 0xe7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+			outputStream.WriteTimeout = 3000;
+			outputStream.ReadTimeout = 3000;
+            byte[] initData1 = [0x00, 0x00, 0x00, 0x10, 0x20, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x03];
+			byte[] initData2 = [0x00, 0x00, 0x00, 0x10, 0x23, 0x00, 0x00, 0x00, 0x19, 0xe7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 			outputStream.Write(initData1, 0, initData1.Length);
 			Console.ForegroundColor = ConsoleColor.Cyan;
@@ -65,9 +71,9 @@ namespace NetworkMIDI_test {
 				return 1;
 			}
 
-			outputStream.Write(initData2, 0, initData1.Length);
+			outputStream.Write(initData2, 0, initData2.Length);
 			Console.ForegroundColor = ConsoleColor.Cyan;
-			Console.WriteLine("Sent: {0}", BitConverter.ToString(initData2), ConsoleColor.Cyan);
+            Console.WriteLine("Sent: {0}", BitConverter.ToString(initData2), ConsoleColor.Cyan);
 
 			byte[] receiveBuffer2 = new byte[tcpClient.ReceiveBufferSize];
 			try {
@@ -120,7 +126,19 @@ namespace NetworkMIDI_test {
 			}
 		}
 
-		static void CloseTCP() {
+		async static void Heartbeat() {
+            // Heartbeat every 1s
+            // F0 43 10 3E 12 7F F7
+            byte[] beat = [0x00, 0x00, 0x00, 0x1b, 0x16, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x07, 0xf0, 0x43, 0x10, 0x3e, 0x12, 0x7f, 0xf7];
+            for (;;) {
+				if (!running) break;
+				await Task.Delay(1000);
+                outputStream.Write(beat, 0, beat.Length);
+			}
+
+        }
+
+        static void CloseTCP() {
 			inputStream.Close();
 			consoleClient.Close();
 		}
@@ -146,7 +164,7 @@ namespace NetworkMIDI_test {
 			//byte[] closeDataD = new byte[] { 0x00, 0x00, 0x00, 0x10, 0x13, 0x00, 0x00, 0x00, 0xbd, 0x78, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
 			//byte[] closeDataE = new byte[] { 0x00, 0x00, 0x00, 0x10, 0x13, 0x00, 0x00, 0x00, 0xbe, 0x78, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
 			//byte[] closeDataF = new byte[] { 0x00, 0x00, 0x00, 0x10, 0x13, 0x00, 0x00, 0x00, 0xbf, 0x78, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
-			byte[] closeDataZ = new byte[] { 0x00, 0x00, 0x00, 0x10, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
+			byte[] closeDataZ = [0x00, 0x00, 0x00, 0x10, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff];
 
 			try {
 				//outputStream.Write(closeData0);
@@ -175,7 +193,7 @@ namespace NetworkMIDI_test {
 		}
 
 		static List<int> GetIntsFromBytes(byte[] bytes) {
-			List<int> output = new List<int>();
+			List<int> output = [];
 			for (int i = 0; i < bytes.Length - 4; i += 4) {
 				if (bytes[i] == 0xFF) { break; }
 				byte[] number = new byte[4];
