@@ -9,11 +9,11 @@ namespace NetworkMIDI {
 	class Program {
 
 		static TcpClient tcpClient;
-		static NetworkStream outputStream;
+		static NetworkStream stream;
 
-		static TcpListener tcpListener;
-		static NetworkStream inputStream;
-		static TcpClient consoleClient;
+		//static TcpListener tcpListener;
+		//static NetworkStream inputStream;
+		//static TcpClient consoleClient;
 
 		static bool running = false;
 
@@ -24,9 +24,14 @@ namespace NetworkMIDI {
 			Task listenerTask = Task.Run(() => TCPListener());
 			Console.WriteLine("Started network MIDI!");
 
+			if (tcpClient.Connected)
+				Console.WriteLine("Connected!");
+			else
+				Console.WriteLine("Disconnected!");
+
 			Task heartbeat = Task.Run(() => Heartbeat());
 
-            Console.ReadKey();
+			Console.ReadKey();
 			running = false;
 			Console.ResetColor();
 			StopTCP();
@@ -39,9 +44,8 @@ namespace NetworkMIDI {
 
 		static int StartTCP() {
             Console.Out.WriteLine("Connecting to 192.168.1.128...");
-			tcpClient = new TcpClient();
 			try {
-				tcpClient.ConnectAsync("192.168.1.128", 12300).Wait(1000);
+				tcpClient = new TcpClient("192.168.1.128", 50000);
 			} catch (SocketException) {
 				return 1;
 			} catch (TimeoutException) {
@@ -50,19 +54,19 @@ namespace NetworkMIDI {
 			if (!tcpClient.Connected) return 1;
 
 			tcpClient.NoDelay = true;
-			outputStream = tcpClient.GetStream();
-			outputStream.WriteTimeout = 3000;
-			outputStream.ReadTimeout = 3000;
+			stream = tcpClient.GetStream();
+			stream.WriteTimeout = 3000;
+			stream.ReadTimeout = 3000;
             byte[] initData1 = [0x00, 0x00, 0x00, 0x10, 0x20, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x03];
 			byte[] initData2 = [0x00, 0x00, 0x00, 0x10, 0x23, 0x00, 0x00, 0x00, 0x19, 0xe7, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
-			outputStream.Write(initData1, 0, initData1.Length);
+			stream.Write(initData1, 0, initData1.Length);
 			Console.ForegroundColor = ConsoleColor.Cyan;
 			Console.WriteLine("Sent: {0}", BitConverter.ToString(initData1));
 
 			byte[] receiveBuffer1 = new byte[tcpClient.ReceiveBufferSize];
 			try {
-				int received1 = outputStream.Read(receiveBuffer1, 0, receiveBuffer1.Length);
+				int received1 = stream.Read(receiveBuffer1, 0, receiveBuffer1.Length);
 				Console.ForegroundColor = ConsoleColor.Green;
 				Console.WriteLine("Got:  {0}\n", BitConverter.ToString(receiveBuffer1, 0, received1));
 			} catch (IOException e) {
@@ -71,13 +75,13 @@ namespace NetworkMIDI {
 				return 1;
 			}
 
-			outputStream.Write(initData2, 0, initData2.Length);
+			stream.Write(initData2, 0, initData2.Length);
 			Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("Sent: {0}", BitConverter.ToString(initData2), ConsoleColor.Cyan);
 
 			byte[] receiveBuffer2 = new byte[tcpClient.ReceiveBufferSize];
 			try {
-				int received2 = outputStream.Read(receiveBuffer2, 0, receiveBuffer2.Length);
+				int received2 = stream.Read(receiveBuffer2, 0, receiveBuffer2.Length);
 				Console.ForegroundColor = ConsoleColor.Green;
 				Console.WriteLine("Got:  {0}\n", BitConverter.ToString(receiveBuffer2, 0, received2));
 			} catch (IOException e) {
@@ -90,24 +94,27 @@ namespace NetworkMIDI {
 		}
 
 		static void TCPListener() {
-			IPAddress anAddress = IPAddress.Any;
-			tcpListener = new TcpListener(anAddress, 12300);
-			tcpListener.Start();
+            //IPAddress anAddress = IPAddress.Any;
+            //tcpListener = new TcpListener(anAddress, 50000);
+            //tcpListener.Start();
 
-			while (running) {
+            while (running) {
 				try {
-					if (consoleClient == null || !consoleClient.Connected) {
-						consoleClient = tcpListener.AcceptTcpClient();
-						consoleClient.NoDelay = true;
-						inputStream = consoleClient.GetStream();
+					if (tcpClient == null || !tcpClient.Connected) {
+						Console.WriteLine("Disconnected!");
+						break;
+						//consoleClient = tcpListener.AcceptTcpClient();
+						//consoleClient = tcpClient;
+						//consoleClient.NoDelay = true;
+						//inputStream = consoleClient.GetStream();
 					}
 
-					byte[] buffer = new byte[consoleClient.ReceiveBufferSize];
-					int bytesRead = inputStream.Read(buffer, 0, consoleClient.ReceiveBufferSize);
+					byte[] buffer = new byte[tcpClient.ReceiveBufferSize];
+					int bytesRead = stream.Read(buffer, 0, tcpClient.ReceiveBufferSize);
 					string dataReceived = BitConverter.ToString(buffer, 0, bytesRead);
 
 					byte[] ackMessage = { 0x00, 0x00, 0x00, 0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff };
-					inputStream.Write(ackMessage, 0, ackMessage.Length);
+					stream.Write(ackMessage, 0, ackMessage.Length);
 
 					Console.ForegroundColor = ConsoleColor.Green;
 					Console.WriteLine($"Data received: {dataReceived}");
@@ -133,18 +140,18 @@ namespace NetworkMIDI {
             for (;;) {
 				if (!running) break;
 				await Task.Delay(1000);
-                outputStream.Write(beat, 0, beat.Length);
+                stream.Write(beat, 0, beat.Length);
 			}
 
         }
 
         static void CloseTCP() {
-			inputStream.Close();
-			consoleClient.Close();
+			stream.Close();
+			tcpClient.Close();
 		}
 
 		static void StopTCP() {
-			if (tcpClient == null || !tcpClient.Connected || outputStream == null || !outputStream.CanWrite) {
+			if (tcpClient == null || !tcpClient.Connected || stream == null || !stream.CanWrite) {
 				return;
 			}
 
@@ -183,12 +190,12 @@ namespace NetworkMIDI {
 				//outputStream.Write(closeDataD);
 				//outputStream.Write(closeDataE);
 				//outputStream.Write(closeDataF);
-				outputStream.Write(closeDataZ);
+				stream.Write(closeDataZ);
 			} catch (IOException) {
 				Console.ForegroundColor = ConsoleColor.Red;
 				Console.Out.WriteLine("Couldn't close properly...");
 			}
-			outputStream.Close();
+			stream.Close();
 			tcpClient.Close();
 		}
 
